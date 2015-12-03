@@ -1,261 +1,367 @@
 package api;
 
-import java.lang.reflect.Array;
-import java.util.ArrayList;
 import com.google.gson.Gson;
-import com.sun.jersey.api.container.httpserver.HttpServerFactory;
-import com.sun.net.httpserver.HttpServer;
+import com.google.gson.JsonSyntaxException;
 import controller.Logic;
-import model.Config;
+import database.DatabaseWrapper;
 import model.Game;
-import model.Gamer;
 import model.Score;
 import model.User;
-import org.codehaus.jettison.json.JSONException;
-//TODO: Can't parse with this import. Maybe because the parser and object needs to be from same lib
-//import org.codehaus.jettison.json.JSONObject;
-import org.json.simple.JSONObject;
-import org.json.simple.parser.JSONParser;
-import java.io.FileReader;
 
 import javax.ws.rs.*;
 import javax.ws.rs.core.MediaType;
 import javax.ws.rs.core.Response;
-import java.io.IOException;
-import java.util.Map;
+import javax.ws.rs.core.Response.ResponseBuilder;
+import java.util.ArrayList;
+import java.util.HashMap;
 
 @Path("/api")
 public class Api {
 
+    private class Status {
+        private static final int CREATED = 201;
+        private static final int BAD_REQUEST = 400;
+        private static final int SERVER_ERROR = 500;
+    }
+
+    private ResponseBuilder ok() {
+        return Response.ok();
+    }
+
+    private ResponseBuilder created() {
+        return Response.status(Status.CREATED);
+    }
+
+    private ResponseBuilder badReq() {
+        return Response.status(Status.BAD_REQUEST);
+    }
+
+    private ResponseBuilder error() {
+        return Response.status(Status.SERVER_ERROR);
+    }
+
+    private Response withCors(ResponseBuilder resp) {
+        return resp.header("Access-Control-Allow-Origin", "*")
+                .header("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With")
+                .header("Access-Control-Allow-Methods", "GET, POST, DELETE, PUT, OPTIONS").build();
+    }
+
     @GET //"GET-Request" gør at vi kan forspørge en specifik data
-    @Produces("application/json")
+    @Produces(MediaType.APPLICATION_JSON)
     public String getClichedMessage() {
         // Return some cliched textual content
         return "Hello World!";
     }
 
+    @OPTIONS
+    @Path("/login/")
+    public Response login() {
+        return withCors(ok());
+    }
+
     @POST //"POST-request" er ny data vi kan indtaste for at logge ind.
     @Path("/login/")
-    @Produces("application/json")
+    @Consumes(MediaType.APPLICATION_JSON)
+    @Produces(MediaType.APPLICATION_JSON)
     public Response login(String data) {
-
+        ResponseBuilder result;
         try {
 
             User user = new Gson().fromJson(data, User.class);
 
-            int result = Logic.userLogin(user.getUserName(), user.getPassword());
+            HashMap<String, Integer> hashMap = Logic.authenticateUser(user.getUsername(), user.getPassword());
 
-            switch (result) {
+            switch (hashMap.get("code")) {
                 case 0:
-                    return Response.status(400).entity("{\"message\":\"User doesn't exist\"}").build();
-
+                    result = badReq().entity("{\"message\":\"Wrong username or password\"}");
+                    break;
                 case 1:
-                    return Response.status(400).entity("{\"message\":\"Wrong password\"}").build();
-
+                    result = badReq().entity("{\"message\":\"Wrong username or password\"}");
+                    break;
                 case 2:
-                    return Response.status(200).entity("{\"message\":\"Login successful\"}").build();
-
+                    result = ok().entity("{\"message\":\"Login successful\", \"userid\":" + hashMap.get("userid") + "}");
+                    break;
                 default:
-                    return Response.status(400).entity("{\"message\":\"Something went wrong\"}").build();
+                    result = error()
+                            .entity("{\"message\":\"Unknown error. Please contact Henrik Thorn at: henrik@itkartellet.dk\"}");
             }
 
-        } catch (Exception e) {
-            return Response.status(400).entity("{\"message\":\"Bad request\"}").build();
+        } catch (JsonSyntaxException | NullPointerException e) {
+            e.printStackTrace();
+            result = badReq().entity("{\"message\":\"Error in JSON\"}");
         }
 
+        return withCors(result);
     }
 
     @GET //"GET-request"
-    @Path("/user/") //USER-path - identifice det inden for metoden
-    @Produces("application/json")
+    @Path("/users/") //USER-path - identifice det inden for metoden
+    @Produces(MediaType.APPLICATION_JSON)
     public Response getAllUsers() {
 
         ArrayList<User> users = Logic.getUsers();
 
-        return Response
-                .status(200)
-                .entity(new Gson().toJson(users))
-                .header("Access-Control-Allow-Origin", "*")
-                .build();
-
-        //return new Gson().toJson(users);
+        return withCors(ok().entity(new Gson().toJson(users)));
     }
 
+    /*
     @DELETE //DELETE-request fjernelse af data (bruger): Slet bruger
-    @Path("/user/")
-    @Produces("application/json")
-    public Response deleteUser(int userId) {
+    @Path("/users/{userid}")
+    @Produces(MediaType.APPLICATION_JSON)
+    public Response deleteUser(@PathParam("userid") int userId) {
 
-        boolean deleteUser = Logic.deleteUser(userId);
+        int deleteUser = Logic.deleteUser(userId);
 
-        if (deleteUser) {
-            return Response.status(200).entity("{\"message\":\"User was deleted\"}").build();
-        } else {
-            return Response.status(400).entity("{\"message\":\"Failed. User was not deleted\"}").build();
-        }
-
-    }
-
-    @POST //POST-request: Ny data der skal til serveren; En ny bruger oprettes
-    @Path("/user/")
-    @Produces("application/json")
-    public Response createUser(String data) {
-        User user = null;
-
-        boolean createdUser = Logic.createUser(user);
-
-        if (createdUser) {
+        if (deleteUser == 1) {
             return Response
                     .status(200)
-                    .entity("{\"message\":\"User was created\"}")
-                    .header("Access-Control-Allow-Origin", "*")
-                    .header("Access-Control-Allow-Methods", "PUT, GET, POST")
-                    .header("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept")
+                    .entity("{\"message\":\"User was deleted\"}")
+                    .header("Access-Control-Allow-Headers", "*")
                     .build();
         } else {
-            return Response.status(400).entity("{\"message\":\"Failed. User was not created\"}").build();
+            return Response
+                    .status(400)
+                    .entity("{\"message\":\"Failed. User was not deleted\"}")
+                    .header("Access-Control-Allow-Headers", "*")
+                    .build();
         }
+
+    }
+*/
+
+    @POST //POST-request: Ny data der skal til serveren; En ny bruger oprettes
+    @Path("/users/")
+    @Produces(MediaType.APPLICATION_JSON)
+    public Response createUser(String data) {
+        ResponseBuilder result;
+        User user;
+
+        try {
+            user = new Gson().fromJson(data, User.class);
+
+            user.setType(1);
+
+            boolean createdUser = Logic.createUser(user);
+
+            result = createdUser ?
+                    ok().entity("{\"message\":\"User was created\"}") :
+                    badReq().entity("{\"message\":\"Username or email already exists\"}");
+
+        } catch (JsonSyntaxException | NullPointerException e) {
+            e.printStackTrace();
+            result = badReq().entity("{\"message\":\"Error in JSON\"}");
+        }
+
+        return withCors(result);
+    }
+
+    @OPTIONS
+    @Path("/users/{userId}")
+    public Response getUser() {
+        return withCors(ok());
     }
 
     @GET //"GET-request"
-    @Path("/user/{userId}")
-    @Produces("application/json")
-    // JSON: {"userId": [userid]}
-    public String getUser(@PathParam("userId") int userId) {
-
+    @Path("/users/{userId}")
+    @Produces(MediaType.APPLICATION_JSON)
+    public Response getUser(@PathParam("userId") int userId) {
+        ResponseBuilder result;
         User user = Logic.getUser(userId);
         //udprint/hent/identificer af data omkring spillere
+        result = user == null ?
+                ok().entity("{\"message\":\"User was not found\"}") :
+                ok().entity(new Gson().toJson(user));
 
-        return new Gson().toJson(user);
+        return withCors(result);
     }
 
-//    @GET //"GET-request"
-//    @Path("/games")
-//    @Produces("application/json")
-//    public String getGames() {
-//
-//        ArrayList<model.Game> games = Logic.getGames();
-//        return new Gson().toJson(games);
-//
-//    }
+    @OPTIONS
+    @Path("/games/")
+    public Response createGame() {
+        return withCors(ok());
+    }
 
     @POST //POST-request: Nyt data; nyt spil oprettes
-    @Path("/game/")
-    @Produces("application/json")
+    @Path("/games/")
+    @Produces(MediaType.APPLICATION_JSON)
     public Response createGame(String json) {
-
-        JSONParser jsonParser = new JSONParser();
-
-        String gameName;
-        Gamer host;
-        Gamer opponent;
-
+        ResponseBuilder result;
         try {
+            Game game = Logic.createGame(new Gson().fromJson(json, Game.class));
 
-            //Initialize Object class as json, parsed by jsonParsed.
-            Object obj = jsonParser.parse(json);
-
-            //Instantiate JSONObject class as jsonObject equal to obj object.
-            JSONObject jsonObject = (JSONObject) obj;
-
-            //Getting values from our JSON objects and setting variables + fetching User objects host and opponent via db.getUser.
-            gameName = ((String) jsonObject.get("gameName"));
-
-            host = new Gamer();
-            host.setId(((Long) jsonObject.get("host")).intValue());
-            host.setControls((String) jsonObject.get("hostControls"));
-
-            opponent = new Gamer();
-            opponent.setId(((Long) jsonObject.get("opponent")).intValue());
-
-            Game createGame = Logic.createGame(gameName,host,opponent);
-
-            String gameJson = new Gson().toJson(createGame);
-
-            return Response
-                    .status(201)
-                    .entity("{\"message\":\"Game was created\"}")
-                    .header("Access-Control-Allow-Origin", "*")
-                    .build();
-            //TODO: changed JSONObject so it imports from org.json.simple.JSONObject instead of the codehaus lib
-        } /*catch (JSONException e) {
+            result = game == null ?
+                    badReq().entity("{\"message\":\"something went wrong\"}") :
+                    created().entity(new Gson().toJson(game));
+        } catch (JsonSyntaxException | NullPointerException e) {
             e.printStackTrace();
-        }*/ catch (org.json.simple.parser.ParseException e) {
-            e.printStackTrace();
+            result = badReq().entity("{\"message\":\"Error in JSON\"}");
         }
 
-        return Response.status(500).entity("something went wrong").build();
-
+        return withCors(result);
     }
 
-    @GET //GET-request: Afslutter spillet
-    @Path("/startgame/{gameid}")
-    @Produces("application/json")
-    public String startGame(@PathParam("gameid") int gameId) {
+    @PUT
+    @Path("/games/join/")
+    @Produces(MediaType.APPLICATION_JSON)
+    public Response joinGame(String json) {
+        ResponseBuilder result;
+        try {
+            Game game = new Gson().fromJson(json, Game.class);
 
-        Map startGame = Logic.startGame(gameId);
-        return new Gson().toJson(startGame);
+            result = Logic.joinGame(game) ?
+                    created().entity("{\"message\":\"Game was joined\"}") :
+                    badReq().entity("{\"message\":\"Game closed\"}");
+        } catch (JsonSyntaxException | NullPointerException e) {
+            e.printStackTrace();
+            result = badReq().entity("{\"message\":\"Error in JSON\"}");
+        }
 
+        return withCors(result);
+    }
+
+    @OPTIONS
+    @Path("/games/join/")
+    public Response joinGame() {
+        return withCors(ok());
+    }
+
+    @PUT
+    @Path("/games/start/")
+    @Produces(MediaType.APPLICATION_JSON)
+    public Response startGame(String json) {
+        ResponseBuilder result;
+        try {
+            Game game = Logic.startGame(new Gson().fromJson(json, Game.class));
+
+            result = game == null ? badReq().entity("something went wrong") : ok().entity(new Gson().toJson(game));
+
+        } catch (JsonSyntaxException | NullPointerException e) {
+            e.printStackTrace();
+            result = badReq().entity("{\"message\":\"Error in JSON\"}");
+        }
+
+        return withCors(result);
+    }
+
+    @OPTIONS
+    @Path("/games/{gameid}")
+    public Response deleteGame() {
+        return withCors(ok());
     }
 
     @DELETE //DELETE-request fjernelse af data(spillet slettes)
-    @Path("/game/{gameid}")
-    @Produces("appication/json")
-    public String deleteGame(@PathParam("gameid") int gameId) {
+    @Path("/games/{gameid}")
+    @Produces(MediaType.APPLICATION_JSON)
+    public Response deleteGame(@PathParam("gameid") int gameId) {
+        int deleteGame = Logic.deleteGame(gameId);
 
-        boolean deleteGame = Logic.deleteUser(gameId);
-        return new Gson().toJson(deleteGame);
+        return withCors(
+                deleteGame == 1 ?
+                        ok().entity("{\"message\":\"Game was deleted\"}") :
+                        badReq().entity("{\"message\":\"Failed. Game was not deleted\"}")
+        );
     }
 
     @GET //"GET-request"
     @Path("/game/{gameid}")
-    @Produces("application/json")
-    public String getGame(@PathParam("gameid") int gameid) {
-
+    @Produces(MediaType.APPLICATION_JSON)
+    public Response getGame(@PathParam("gameid") int gameid) {
         Game game = Logic.getGame(gameid);
-        return new Gson().toJson(game);
+        return withCors(ok().entity(new Gson().toJson(game)));
+    }
+
+    @OPTIONS
+    @Path("/scores/")
+    @Produces(MediaType.APPLICATION_JSON)
+    public Response getHighscoreOpts() {
+        return withCors(ok());
     }
 
     @GET //"GET-request"
     @Path("/scores/")
-    @Produces("application/json")
-    public String getHighscore(String data) {
-
-        return new Gson().toJson(Logic.getHighscore());
-
+    @Produces(MediaType.APPLICATION_JSON)
+    public Response getHighscore() {
+        return withCors(ok().entity(new Gson().toJson(Logic.getHighscore())));
     }
 
+    /*
+    Getting games by userid
+     */
     @GET //"GET-request"
-    @Path("/games/{userid}")
-    @Produces("application/json")
-    // TODO: Rename method in wrapper + logic: getScoresByUserID
-   public Response getGamesByUserID(@PathParam("userid") int userid) {
+    @Path("/games/{userid}/")
+    @Produces(MediaType.APPLICATION_JSON)
+    public Response getGamesByUserID(@PathParam("userid") int userId) {
 
-        ArrayList<Score> score = Logic.getGamesByUserID(userid);
+        ArrayList<Game> games = Logic.getGames(DatabaseWrapper.GAMES_BY_ID, userId);
 
-        return Response.status(201).entity(new Gson().toJson(score))
-                .header("Access-Control-Allow-Headers", "*")
-                .build();
+        return withCors(ok().entity(new Gson().toJson(games)));
     }
 
-//
-//    }
+    /*
+    Getting games by game status and user id
+     */
+    @GET //"GET-request"
+    @Path("/games/{status}/{userid}")
+    @Produces(MediaType.APPLICATION_JSON)
+    public Response getGamesByStatusAndUserID(@PathParam("status") String status, @PathParam("userid") int userId) {
+        ArrayList<Game> games = null;
+        switch (status) {
+            case "pending":
+                games = Logic.getGames(DatabaseWrapper.PENDING_BY_ID, userId);
+                break;
+            case "open":
+                games = Logic.getGames(DatabaseWrapper.OPEN_BY_ID, userId);
+                break;
+            case "finished":
+                games = Logic.getGames(DatabaseWrapper.COMPLETED_BY_ID, userId);
+                break;
+        }
 
-    public static void main(String[] args) throws IOException {
-        HttpServer server = HttpServerFactory.create("http://localhost:9998/");
-
-        Config.init();
-        server.start();
-
-        System.out.println("Server running");
-        System.out.println("Visit: http://localhost:9998/api");
-        System.out.println("Hit return to stop...");
-        System.in.read();
-        System.out.println("Stopping server");
-        server.stop(0);
-        System.out.println("Server stopped");
-
-        System.out.println();
+        return withCors(ok().entity(new Gson().toJson(games)));
     }
 
+    //Gets all games where the user is invited
+    @GET
+    @Path("/games/opponent/{userid}/")
+    @Produces(MediaType.APPLICATION_JSON)
+    public Response getGamesInvitedByID(@PathParam("userid") int userId) {
+        ArrayList<Game> games = Logic.getGames(DatabaseWrapper.PENDING_INVITED_BY_ID, userId);
+
+        return withCors(ok().entity(new Gson().toJson(games)));
+    }
+
+    //Gets all games hosted by the user
+    @GET
+    @Path("/games/host/{userid}/")
+    @Produces(MediaType.APPLICATION_JSON)
+    public Response getGamesHostedByID(@PathParam("userid") int userId) {
+        ArrayList<Game> games = Logic.getGames(DatabaseWrapper.PENDING_HOSTED_BY_ID, userId);
+
+        return withCors(ok().entity(new Gson().toJson(games)));
+    }
+
+    /*
+    Getting a list of all open games
+     */
+    @GET //"GET-request"
+    @Path("/games/open/")
+    @Produces(MediaType.APPLICATION_JSON)
+    public Response getOpenGames() {
+        ArrayList<Game> games = Logic.getGames(DatabaseWrapper.OPEN_GAMES, 0);
+
+        return withCors(ok().entity(new Gson().toJson(games)));
+    }
+
+    /*
+    Getting all scores by user id
+    Used for showing all finished games and scores for the user
+     */
+    @GET //"GET-request"
+    @Path("/scores/{userid}")
+    @Produces(MediaType.APPLICATION_JSON)
+    public Response getScoresByUserID(@PathParam("userid") int userid) {
+        ArrayList<Score> score = Logic.getScoresByUserID(userid);
+
+        return withCors(ok().entity(new Gson().toJson(score)));
+    }
 }
